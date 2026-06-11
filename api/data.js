@@ -11,7 +11,7 @@ const UPSTASH_TOKEN =
   process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
 // IDs fixos dos 5 participantes (devem bater com o index.html)
-const USER_IDS = ["alexandre", "joao", "lucas", "heitor", "luis"];
+const USER_IDS = ["alexandre", "joao", "lucas", "heitor", "luis", "murilo"];
 
 // Executa um comando Redis via API REST do Upstash
 async function redis(command) {
