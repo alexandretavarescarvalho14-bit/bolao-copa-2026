@@ -10,7 +10,7 @@ const UPSTASH_URL =
 const UPSTASH_TOKEN =
   process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
-// IDs fixos dos 5 participantes (devem bater com o index.html)
+// IDs fixos dos participantes (devem bater com o index.html)
 const USER_IDS = ["alexandre", "joao", "lucas", "heitor", "luis", "murilo"];
 
 // Executa um comando Redis via API REST do Upstash
@@ -23,7 +23,13 @@ async function redis(command) {
     },
     body: JSON.stringify(command),
   });
-  const data = await response.json();
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || data.error) {
+    throw new Error(data.error || `Erro no Redis: ${response.status}`);
+  }
+
   return data.result;
 }
 
@@ -55,16 +61,22 @@ export default async function handler(req, res) {
 
       (values || []).forEach((v, i) => {
         let parsed = null;
+
         try {
           parsed = v ? JSON.parse(v) : null;
         } catch (e) {
           parsed = null;
         }
+
         const key = allKeys[i];
-        if (key.startsWith("bets:")) out.bets[key.slice(5)] = parsed || {};
-        else if (key.startsWith("bonus:"))
+
+        if (key.startsWith("bets:")) {
+          out.bets[key.slice(5)] = parsed || {};
+        } else if (key.startsWith("bonus:")) {
           out.bonusBets[key.slice(6)] = parsed || {};
-        else out[key] = parsed || {};
+        } else {
+          out[key] = parsed || {};
+        }
       });
 
       return res.status(200).json(out);
@@ -74,16 +86,25 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       const body =
         typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+
       const { scope, uid, value } = body;
 
       let redisKey;
-      if (scope === "bets") redisKey = `bets:${uid}`;
-      else if (scope === "bonusBets") redisKey = `bonus:${uid}`;
-      else if (["results", "bonusResults", "matchTeams"].includes(scope))
+
+      if (scope === "bets" || scope === "bonusBets") {
+        if (!USER_IDS.includes(uid)) {
+          return res.status(400).json({ error: "usuário inválido" });
+        }
+
+        redisKey = scope === "bets" ? `bets:${uid}` : `bonus:${uid}`;
+      } else if (["results", "bonusResults", "matchTeams"].includes(scope)) {
         redisKey = scope;
-      else return res.status(400).json({ error: "scope inválido" });
+      } else {
+        return res.status(400).json({ error: "scope inválido" });
+      }
 
       await redis(["SET", redisKey, JSON.stringify(value)]);
+
       return res.status(200).json({ ok: true });
     }
 
