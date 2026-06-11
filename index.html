@@ -181,19 +181,20 @@ body{font-family:var(--font);background:var(--bg-tertiary);min-height:100vh;colo
 <div id="app"><div class="loading">Carregando bolão...</div></div>
 
 <script>
-// ===== CONFIGURAÇÃO DOS USUÁRIOS =====
-// Para trocar os PINs, edite os valores abaixo e faça um novo deploy.
-const USERS = [
-  {id:'alexandre',name:'Alexandre',pin:'1234',initials:'AL'},
-  {id:'joao',name:'João',pin:'2345',initials:'JO'},
-  {id:'lucas',name:'Lucas',pin:'3456',initials:'LU'},
-  {id:'heitor',name:'Heitor',pin:'4567',initials:'HE'},
-  {id:'luis',name:'Luís',pin:'5678',initials:'LS'},
-  {id:'murilo',name:'Murilo',pin:'6789',initials:'MU'},
-  {id:'arthur',name:'Arthur',pin:'7890',initials:'AR'},
-  {id:'cadu',name:'Cadu',pin:'8901',initials:'CA'},
+// ===== USUÁRIOS =====
+// A lista autoritativa vem do banco (DATA.users).
+// Este array serve apenas como fallback antes do primeiro load.
+let USERS = [
+  {id:'alexandre', name:'Alexandre', pin:'1234', initials:'AL'},
+  {id:'joao',      name:'João',      pin:'2345', initials:'JO'},
+  {id:'lucas',     name:'Lucas',     pin:'3456', initials:'LU'},
+  {id:'heitor',    name:'Heitor',    pin:'4567', initials:'HE'},
+  {id:'luis',      name:'Luís',      pin:'5678', initials:'LS'},
+  {id:'murilo',    name:'Murilo',    pin:'6789', initials:'MU'},
+  {id:'arthur',    name:'Arthur',    pin:'7890', initials:'AR'},
+  {id:'cadu',      name:'Cadu',      pin:'8901', initials:'CA'},
 ];
-const ADMIN_PIN = '9999'; // PIN de administrador (apenas Alexandre)
+const ADMIN_PIN = '9999';
 
 const TEAMS = {
   1:{name:'México',iso:'mx'},2:{name:'África do Sul',iso:'za'},3:{name:'Coreia do Sul',iso:'kr'},4:{name:'Tchéquia',iso:'cz'},
@@ -336,6 +337,10 @@ const AVATAR_COLORS=[
   {bg:'#e6fbfa',color:'#0e7a6e'},{bg:'#fff3e6',color:'#8a4a00'},
 ];
 function getAvatarStyle(i){return AVATAR_COLORS[i%AVATAR_COLORS.length]}
+function esc(v){return String(v??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]))}
+function scoreFilled(v){return v!==undefined&&v!==null&&v!==''&&!Number.isNaN(Number(v))}
+function scoreValue(v){return Number(v)}
+function isValidScoreInput(v){return v===''||(/^\d+$/.test(String(v))&&Number(v)>=0&&Number(v)<=20)}
 
 function getLockTime(matchDate){return new Date(new Date(matchDate).getTime()-LOCK_MINUTES_BEFORE*60*1000)}
 function isLocked(m){return new Date()>=getLockTime(m.date)}
@@ -364,23 +369,26 @@ function countdownTo(matchDate){
 
 function calcPoints(p,r){
   if(!r||r.homeScore===undefined)return null;
-  const rH=+r.homeScore,rA=+r.awayScore,pH=+p.homeScore,pA=+p.awayScore;
-  if(isNaN(pH)||isNaN(pA))return null;
+  if(!p||!scoreFilled(p.homeScore)||!scoreFilled(p.awayScore))return null;
+  const rH=scoreValue(r.homeScore),rA=scoreValue(r.awayScore),pH=scoreValue(p.homeScore),pA=scoreValue(p.awayScore);
   if(pH===rH&&pA===rA)return 10;
   const rR=rH>rA?'H':rH<rA?'A':'D',pR=pH>pA?'H':pH<pA?'A':'D';
-  if(pR===rR)return 5;
-  return 0;
+  return pR===rR?5:0;
 }
 function calcKOPoints(p,r){
   if(!r||r.homeScore===undefined)return null;
-  const rH=+r.homeScore,rA=+r.awayScore,pH=+p.homeScore,pA=+p.awayScore;
-  if(isNaN(pH)||isNaN(pA))return null;
+  if(!p||!scoreFilled(p.homeScore)||!scoreFilled(p.awayScore))return null;
+  const rH=scoreValue(r.homeScore),rA=scoreValue(r.awayScore),pH=scoreValue(p.homeScore),pA=scoreValue(p.awayScore);
   if(pH===rH&&pA===rA)return 10;
   if(rH===rA){
+    // Resultado real empatado: o diferencial é acertar o classificado.
     if(r.advancedTeam&&p.advancedTeam&&r.advancedTeam===p.advancedTeam)return 5;
-    if(!p.advancedTeam)return 0;
-    return 2;
+    if(p.advancedTeam)return 2;
+    return 0;
   }
+  // Resultado real teve vencedor no tempo normal/prorrogação.
+  // Quem palpitou empate não deve ganhar pontos por "vencedor".
+  if(pH===pA)return 0;
   const rW=rH>rA?'home':'away',pW=pH>pA?'home':'away';
   return rW===pW?5:0;
 }
@@ -426,25 +434,44 @@ async function loadData(){
 // são colapsadas numa só request
 function apiSave(scope, value, uid) {
   const key = uid ? `${scope}:${uid}` : scope;
-  clearTimeout(_saveTimers[key]);
+  const shouldDebounce = scope === 'bets' || scope === 'bonusBets';
+
+  if (_saveTimers[key]) {
+    clearTimeout(_saveTimers[key].timer);
+    _saveTimers[key].resolve?.({cancelled:true});
+    delete _saveTimers[key];
+  }
+
+  const runSave = () => {
+    const prev = (_saveQueue[key] || Promise.resolve()).catch(() => {});
+    const job = prev.then(async () => {
+      try {
+        await _fetchWithRetry('/api/data', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({scope, uid, value}),
+        });
+        return {ok:true};
+      } catch(e) {
+        console.error('[bolao] apiSave:', e);
+        showToast('Não salvou. Verifique sua conexão e tente novamente.', 'error');
+        return {ok:false,error:e};
+      }
+    });
+    _saveQueue[key] = job.finally(() => {
+      if (_saveQueue[key] === job) delete _saveQueue[key];
+    });
+    return job;
+  };
+
+  if (!shouldDebounce) return runSave();
+
   return new Promise((resolve) => {
-    _saveTimers[key] = setTimeout(async () => {
-      // Fila: aguarda o save anterior para a mesma chave antes de disparar
-      const prev = _saveQueue[key] || Promise.resolve();
-      _saveQueue[key] = prev.then(async () => {
-        try {
-          await _fetchWithRetry('/api/data', {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({scope, uid, value}),
-          });
-        } catch(e) {
-          console.error('[bolao] apiSave:', e);
-          showToast('Não salvou. Verifique sua conexão e tente novamente.', 'error');
-        }
-        resolve();
-      });
+    const timer = setTimeout(() => {
+      delete _saveTimers[key];
+      runSave().then(resolve);
     }, 400);
+    _saveTimers[key] = {timer, resolve};
   });
 }
 
@@ -459,8 +486,8 @@ function showToast(msg, type='info'){
   t._hide=setTimeout(()=>{t.style.opacity='0';},3000);
 }
 
-async function refresh(){DATA=await loadData();renderPage();}
-async function init(){DATA=await loadData();renderLogin();}
+async function refresh(){DATA=await loadData();if(DATA.users&&DATA.users.length)USERS=DATA.users;renderPage();}
+async function init(){DATA=await loadData();if(DATA.users&&DATA.users.length)USERS=DATA.users;renderLogin();}
 
 function renderLogin(){
   document.getElementById('app').innerHTML=`
@@ -681,7 +708,7 @@ function renderBonus(){
     const cur=mb[bi.id],correct=DATA.bonusResults[bi.id],ok=correct&&String(cur)===String(correct);
     return `<div class="bonus-card">
       <div class="bonus-head"><div class="bonus-icon">${bi.icon}</div><div><div class="bonus-title">${bi.label}</div><div class="bonus-pts">${bi.pts} pontos</div></div></div>
-      ${correct?`<div style="font-size:12.5px;margin-bottom:.5rem;font-weight:500;color:${ok?'var(--green-d)':'var(--red)'}">Correto: ${bi.type==='team'?(TEAMS[correct]?.name||correct):correct} ${ok?'✓':'✗'}</div>`:''}
+      ${correct?`<div style="font-size:12.5px;margin-bottom:.5rem;font-weight:500;color:${ok?'var(--green-d)':'var(--red)'}">Correto: ${bi.type==='team'?(TEAMS[correct]?.name||correct):esc(correct)} ${ok?'✓':'✗'}</div>`:''}
       ${bi.type==='team'?bonusTeamPicker(bi.id,cur,locked,allTeams):bonusPlayer(bi.id,cur,locked)}
     </div>`;
   }).join('')}</div>`;
@@ -694,8 +721,8 @@ function bonusTeamPicker(id,cur,locked,allTeams){
     <div class="team-dropdown" id="tdrop-${id}">${allTeams.slice(0,10).map(t=>`<div class="team-option" onclick="pickTeam('${id}',${t.id})">${flagImg(t.iso)} ${t.name}</div>`).join('')}</div>`;
 }
 function bonusPlayer(id,cur,locked){
-  if(locked)return `<div style="font-weight:600">${cur||'—'}</div>`;
-  return `<input class="player-input" type="text" placeholder="Nome do jogador" value="${cur||''}" onchange="savePlayer('${id}',this.value)">`;
+  if(locked)return `<div style="font-weight:600">${cur?esc(cur):'—'}</div>`;
+  return `<input class="player-input" type="text" placeholder="Nome do jogador" value="${esc(cur||'')}" onchange="savePlayer('${id}',this.value)">`;
 }
 function filterTeams(id,q){
   const all=Object.entries(TEAMS).map(([i,t])=>({id:+i,...t}));
@@ -705,7 +732,7 @@ function filterTeams(id,q){
 }
 async function pickTeam(id,tid){if(isBonusLocked()){alert('Prazo dos bônus encerrado.');renderPage();return;}const uid=state.currentUser.id;if(!DATA.bonusBets[uid])DATA.bonusBets[uid]={};DATA.bonusBets[uid][id]=tid;await apiSave('bonusBets',DATA.bonusBets[uid],uid);renderPage();}
 async function clearBonus(id){if(isBonusLocked()){alert('Prazo dos bônus encerrado.');renderPage();return;}const uid=state.currentUser.id;if(DATA.bonusBets[uid])delete DATA.bonusBets[uid][id];await apiSave('bonusBets',DATA.bonusBets[uid],uid);renderPage();}
-async function savePlayer(id,v){if(isBonusLocked()){alert('Prazo dos bônus encerrado.');renderPage();return;}const uid=state.currentUser.id;if(!DATA.bonusBets[uid])DATA.bonusBets[uid]={};DATA.bonusBets[uid][id]=v;await apiSave('bonusBets',DATA.bonusBets[uid],uid);}
+async function savePlayer(id,v){if(isBonusLocked()){alert('Prazo dos bônus encerrado.');renderPage();return;}if(/[<>]/.test(v)){alert('Nome não pode conter < ou >.');renderPage();return;}const uid=state.currentUser.id;if(!DATA.bonusBets[uid])DATA.bonusBets[uid]={};DATA.bonusBets[uid][id]=v.trim();await apiSave('bonusBets',DATA.bonusBets[uid],uid);}
 
 function renderRules(){
   return `<div class="page">
@@ -827,17 +854,73 @@ function renderAdmin(){
   ${BONUS_ITEMS.map(bi=>{const cur=DATA.bonusResults[bi.id];return `<div class="admin-match"><div class="admin-match-title">${bi.label} (${bi.pts} pts)</div>
     ${bi.type==='team'?`<select class="et-select" id="br-${bi.id}" onchange="saveBonusResult('${bi.id}',this.value)"><option value="">Selecionar...</option>${allTeams.map(t=>`<option value="${t.id}"${cur==t.id?' selected':''}>${t.name}</option>`).join('')}</select>`:`<input class="player-input" type="text" value="${cur||''}" placeholder="Nome do jogador" onchange="saveBonusResult('${bi.id}',this.value)" style="max-width:240px">`}
     ${cur?`<span class="confirmed-tag" style="margin-left:8px">✓</span>`:''}</div>`;}).join('')}
+
+  <div class="section-title" style="margin-top:2rem">👥 Palpites retroativos</div>
+  <div style="font-size:12px;color:var(--text-secondary);margin-bottom:.75rem">Para jogos já travados, registre aqui o palpite que um participante fez antes mas não conseguiu cadastrar.</div>
+  <div class="admin-match">
+    <div class="admin-match-title">Selecione participante e jogo</div>
+    <div class="admin-inputs" style="gap:8px;margin-bottom:.5rem">
+      <select class="et-select" id="retro-uid" style="min-width:130px">
+        <option value="">Participante...</option>
+        ${USERS.map(u=>`<option value="${u.id}">${u.name}</option>`).join('')}
+      </select>
+      <select class="et-select" id="retro-mid" style="min-width:200px">
+        <option value="">Jogo...</option>
+        ${RAW_MATCHES.filter(m=>isLocked(m)).map(m=>{
+          const hT=teamOf(m,'home'),aT=teamOf(m,'away');
+          const hN=hT?hT.name:(m.home?TEAMS[m.home]?.name:'?');
+          const aN=aT?aT.name:(m.away?TEAMS[m.away]?.name:'?');
+          return `<option value="${m.id}">${hN} × ${aN}</option>`;
+        }).join('')}
+      </select>
+    </div>
+    <div class="admin-inputs" style="gap:8px">
+      <input class="admin-score" type="number" min="0" max="20" id="retro-h" placeholder="–">
+      <span>×</span>
+      <input class="admin-score" type="number" min="0" max="20" id="retro-a" placeholder="–">
+      <button class="btn-confirm" onclick="saveRetroBet()">Registrar palpite</button>
+      <span id="retro-status" style="font-size:12px;color:var(--green-d);font-weight:600"></span>
+    </div>
+  </div>
+
+  <div class="section-title" style="margin-top:2rem">➕ Adicionar participante</div>
+  <div style="font-size:12px;color:var(--text-secondary);margin-bottom:.75rem">Novos participantes só pontuam nos jogos que ainda não travaram.</div>
+  <div class="admin-match">
+    <div class="admin-inputs" style="gap:8px;flex-wrap:wrap">
+      <input class="player-input" type="text" id="new-name" placeholder="Nome" style="max-width:160px;margin:0">
+      <input class="player-input" type="text" id="new-pin" placeholder="PIN (4 dígitos)" maxlength="4" inputmode="numeric" style="max-width:120px;margin:0">
+      <input class="player-input" type="text" id="new-initials" placeholder="Sigla (2 letras)" maxlength="3" style="max-width:100px;margin:0">
+      <button class="btn-confirm" onclick="addUser()">Adicionar</button>
+      <span id="add-user-status" style="font-size:12px;color:var(--green-d);font-weight:600"></span>
+    </div>
+  </div>
+  <div class="section-title">Participantes atuais</div>
+  <div class="rank-card">
+    ${USERS.map((u,i)=>{const s=getAvatarStyle(i);return `<div class="rank-row" style="gap:.75rem">
+      <div class="rank-avatar" style="background:${s.bg};color:${s.color}">${u.initials}</div>
+      <div style="flex:1"><div style="font-weight:600;font-size:14px">${u.name}</div><div style="font-size:12px;color:var(--text-secondary)">PIN: ${u.pin} · ID: ${u.id}</div></div>
+      ${u.id!=='alexandre'?`<button class="btn-clear" onclick="removeUser('${u.id}')" style="font-size:11px;padding:.3rem .6rem">Remover</button>`:'<span style="font-size:11px;color:var(--text-tertiary)">admin</span>'}
+    </div>`;}).join('')}
+  </div>
   </div>`;
 }
 
 async function saveBet(id,field,val){
   const m=RAW_MATCHES.find(x=>x.id===id);
   if(m&&isLocked(m)){alert('Palpites encerrados para este jogo.');renderPage();return;}
+  if((field==='homeScore'||field==='awayScore')&&!isValidScoreInput(val)){
+    alert('Use um placar entre 0 e 20.');renderPage();return;
+  }
   const uid=state.currentUser.id;
   if(!DATA.bets[uid])DATA.bets[uid]={};
   if(!DATA.bets[uid][id])DATA.bets[uid][id]={};
-  DATA.bets[uid][id][field]=val;
-  if(m&&m.type!=='group'){const b=DATA.bets[uid][id],pH=+b.homeScore,pA=+b.awayScore;if(!isNaN(pH)&&!isNaN(pA)&&pH!==pA){delete b.etType;delete b.advancedTeam;}setTimeout(renderPage,60);}
+  DATA.bets[uid][id][field]=val===''?'':Number(val);
+
+  if(m&&m.type!=='group'){
+    const b=DATA.bets[uid][id],pH=b.homeScore,pA=b.awayScore;
+    if(!scoreFilled(pH)||!scoreFilled(pA)||scoreValue(pH)!==scoreValue(pA)){delete b.etType;delete b.advancedTeam;}
+    setTimeout(renderPage,60);
+  }
   await apiSave('bets',DATA.bets[uid],uid);
 }
 async function setET(id,field,val){
@@ -873,11 +956,73 @@ async function clearResult(id){
 }
 async function saveMatchTeam(id){
   const h=+document.getElementById('mt-h-'+id)?.value,a=+document.getElementById('mt-a-'+id)?.value;
-  if(!h||!a)return;
+  if(!DATA.matchTeams)DATA.matchTeams={};
+  if(!h&&!a){delete DATA.matchTeams[id];await apiSave('matchTeams',DATA.matchTeams);renderPage();return;}
+  if(!h||!a){showToast('Selecione as duas seleções ou limpe as duas.', 'error');return;}
+  if(h===a){showToast('Mandante e visitante não podem ser iguais.', 'error');return;}
   DATA.matchTeams[id]={homeId:h,awayId:a,home:TEAMS[h],away:TEAMS[a]};
   await apiSave('matchTeams',DATA.matchTeams);renderPage();
 }
-async function saveBonusResult(id,val){DATA.bonusResults[id]=val;await apiSave('bonusResults',DATA.bonusResults);renderPage();}
+async function saveBonusResult(id,val){if(val===''||val==null)delete DATA.bonusResults[id];else DATA.bonusResults[id]=val;await apiSave('bonusResults',DATA.bonusResults);renderPage();}
+
+// Palpite retroativo — admin registra por um participante
+async function saveRetroBet(){
+  const uid=document.getElementById('retro-uid')?.value;
+  const mid=+document.getElementById('retro-mid')?.value;
+  const h=document.getElementById('retro-h')?.value;
+  const a=document.getElementById('retro-a')?.value;
+  const st=document.getElementById('retro-status');
+  if(!uid||!mid||h===''||a===''){st.textContent='Preencha todos os campos.';st.style.color='var(--red)';return;}
+  if(!isValidScoreInput(h)||!isValidScoreInput(a)){st.textContent='Use placares entre 0 e 20.';st.style.color='var(--red)';return;}
+  const user=USERS.find(u=>u.id===uid);
+  const m=RAW_MATCHES.find(x=>x.id===mid);
+  const hT=teamOf(m,'home'),aT=teamOf(m,'away');
+  const hN=hT?hT.name:'Mandante',aN=aT?aT.name:'Visitante';
+  if(!confirm(`Registrar palpite retroativo para ${user?.name}:
+${hN} ${+h} × ${+a} ${aN}
+
+Confirmar?`))return;
+  if(!DATA.bets[uid])DATA.bets[uid]={};
+  DATA.bets[uid][mid]={homeScore:+h,awayScore:+a};
+  await apiSave('bets',DATA.bets[uid],uid);
+  showToast(`Palpite de ${user?.name} registrado.`);
+  renderPage();
+}
+
+// Gestão de usuários
+async function addUser(){
+  const name=document.getElementById('new-name')?.value.trim();
+  const pin=document.getElementById('new-pin')?.value.trim();
+  const initials=document.getElementById('new-initials')?.value.trim().toUpperCase();
+  const st=document.getElementById('add-user-status');
+  if(!name||!pin||!initials){st.textContent='Preencha nome, PIN e sigla.';st.style.color='var(--red)';return;}
+  if(/[<>]/.test(name)||/[<>]/.test(initials)){st.textContent='Nome/sigla não podem conter < ou >.';st.style.color='var(--red)';return;}
+  if(!/^\d{4}$/.test(pin)){st.textContent='PIN deve ter 4 dígitos.';st.style.color='var(--red)';return;}
+  if(!/^[A-Z0-9]{1,3}$/.test(initials)){st.textContent='Sigla deve ter até 3 letras/números.';st.style.color='var(--red)';return;}
+  if(pin===ADMIN_PIN){st.textContent='Este PIN é reservado ao admin.';st.style.color='var(--red)';return;}
+  const id=name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
+  if(id.length<2){st.textContent='Nome precisa gerar um ID válido.';st.style.color='var(--red)';return;}
+  if(id==='__admin__'){st.textContent='ID reservado ao admin.';st.style.color='var(--red)';return;}
+  if(USERS.find(u=>u.id===id)){st.textContent='Já existe um participante com este nome.';st.style.color='var(--red)';return;}
+  if(USERS.find(u=>u.pin===pin)){st.textContent='PIN já usado por outro participante.';st.style.color='var(--red)';return;}
+  const newUser={id,name,pin,initials};
+  const updated=[...USERS,newUser];
+  await apiSave('users',updated);
+  USERS=updated;DATA.users=updated;
+  showToast(`${name} adicionado ao bolão.`);
+  renderPage();
+}
+
+async function removeUser(uid){
+  const user=USERS.find(u=>u.id===uid);
+  if(!user)return;
+  if(!confirm(`Remover ${user.name} do bolão?\n\nOs palpites e pontos dele serão ocultados, mas os dados ficam no banco.`))return;
+  const updated=USERS.filter(u=>u.id!==uid);
+  await apiSave('users',updated);
+  USERS=updated;DATA.users=updated;
+  showToast(`${user.name} removido.`,'error');
+  renderPage();
+}
 
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementById('pin-input')===document.activeElement)doLogin();});
 init();
