@@ -142,6 +142,31 @@ body{font-family:var(--font);background:var(--bg-tertiary);min-height:100vh;colo
 .flag{width:26px;height:18px;object-fit:cover;border-radius:3px;flex-shrink:0;box-shadow:0 0 0 1px var(--border),var(--shadow-sm)}
 .flag-sm{width:22px;height:15px;object-fit:cover;border-radius:2px;flex-shrink:0;box-shadow:0 0 0 1px var(--border)}
 .loading{text-align:center;padding:3.5rem 1rem;color:var(--text-secondary);font-size:14px}
+
+/* Countdown timer */
+.countdown{font-family:var(--display);font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:.2rem .55rem;border-radius:999px;display:inline-flex;align-items:center;gap:.3rem;background:var(--info-bg);color:var(--info-text)}
+.countdown.urgent{background:rgba(214,59,59,.12);color:#a82626;animation:pulse 1.6s ease-in-out infinite}
+.countdown.warning{background:var(--gold-light);color:#8a6500}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.65}}
+.countdown-icon{font-size:9px}
+
+/* Rules page */
+.rules-section{background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:1rem;box-shadow:var(--shadow-sm)}
+.rules-h{font-family:var(--display);font-size:1.05rem;font-weight:700;margin-bottom:.65rem;display:flex;align-items:center;gap:.5rem}
+.rules-h-icon{width:32px;height:32px;border-radius:10px;background:var(--green-light);display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0}
+.rules-h-icon.gold{background:var(--gold-light)}
+.rules-h-icon.info{background:var(--info-bg)}
+.rules-table{width:100%;border-collapse:collapse;margin-top:.5rem;font-size:13.5px}
+.rules-table td,.rules-table th{padding:.55rem .65rem;text-align:left;border-bottom:1px solid var(--border)}
+.rules-table tr:last-child td{border-bottom:none}
+.rules-table th{font-family:var(--display);font-size:11.5px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.04em;background:var(--bg-secondary)}
+.rules-table .pts{font-family:var(--display);font-weight:800;color:var(--green-d);text-align:right;white-space:nowrap}
+.rules-table .pts.zero{color:var(--text-tertiary)}
+.rules-p{font-size:13.5px;line-height:1.55;color:var(--text-primary);margin-bottom:.6rem}
+.rules-p:last-child{margin-bottom:0}
+.rules-list{font-size:13.5px;line-height:1.7;color:var(--text-primary);padding-left:1.2rem}
+.rules-list li{margin-bottom:.3rem}
+.rules-note{font-size:12.5px;color:var(--text-secondary);font-style:italic;margin-top:.65rem;padding:.6rem .75rem;background:var(--bg-secondary);border-radius:var(--radius-md);border-left:3px solid var(--green)}
 </style>
 </head>
 <body>
@@ -156,6 +181,7 @@ const USERS = [
   {id:'lucas',name:'Lucas',pin:'3456',initials:'LU'},
   {id:'heitor',name:'Heitor',pin:'4567',initials:'HE'},
   {id:'luis',name:'Luís',pin:'5678',initials:'LS'},
+  {id:'murilo',name:'Murilo',pin:'6789',initials:'MU'},
 ];
 const ADMIN_PIN = '9999'; // PIN de administrador (apenas Alexandre)
 
@@ -293,7 +319,8 @@ const BONUS_ITEMS = [
 
 const AVATAR_COLORS=[
   {bg:'#e6f1fb',color:'#185fa5'},{bg:'#e8f7ef',color:'#0e7a40'},
-  {bg:'#fdf3d7',color:'#8a6500'},{bg:'#fceaea',color:'#a02020'},{bg:'#f3eaff',color:'#6b2fa0'}
+  {bg:'#fdf3d7',color:'#8a6500'},{bg:'#fceaea',color:'#a02020'},
+  {bg:'#f3eaff',color:'#6b2fa0'},{bg:'#fde9f0',color:'#a02060'}
 ];
 function getAvatarStyle(i){return AVATAR_COLORS[i%AVATAR_COLORS.length]}
 
@@ -301,6 +328,25 @@ function isLocked(m){return new Date()>=new Date(new Date(m.date).getTime()-5*60
 function isBonusLocked(){return new Date()>=BONUS_DEADLINE}
 function fmtDate(d){return new Date(d).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'America/Sao_Paulo'})+'h'}
 function flagImg(iso){return iso?`<img class="flag" src="https://flagcdn.com/w40/${iso}.png" alt="">`:''}
+
+// Calcula tempo restante até o lock (5 min antes do jogo) e devolve string formatada
+function countdownTo(matchDate){
+  const lockMs=new Date(matchDate).getTime()-5*60*1000;
+  const diff=lockMs-Date.now();
+  if(diff<=0)return null;
+  const d=Math.floor(diff/86400000);
+  const h=Math.floor((diff%86400000)/3600000);
+  const m=Math.floor((diff%3600000)/60000);
+  const s=Math.floor((diff%60000)/1000);
+  let urgency='';
+  if(diff<60*60*1000)urgency='urgent';        // < 1h: vermelho pulsando
+  else if(diff<6*60*60*1000)urgency='warning'; // < 6h: amarelo
+  let text;
+  if(d>0)text=`${d}d ${h}h ${String(m).padStart(2,'0')}m`;
+  else if(h>0)text=`${h}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
+  else text=`${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
+  return {text,urgency};
+}
 
 function calcPoints(p,r){
   if(!r||r.homeScore===undefined)return null;
@@ -392,7 +438,7 @@ function doLogin(){
 
 function renderApp(){
   const u=state.currentUser;
-  const tabs=[{id:'ranking',label:'Classificação'},{id:'matches',label:'Meus Palpites'},{id:'all',label:'Todos Palpites'},{id:'bonus',label:'Bônus'},...(state.adminMode?[{id:'admin',label:'⚙ Admin'}]:[])];
+  const tabs=[{id:'ranking',label:'Classificação'},{id:'matches',label:'Meus Palpites'},{id:'all',label:'Todos Palpites'},{id:'bonus',label:'Bônus'},{id:'rules',label:'Pontuação'},...(state.adminMode?[{id:'admin',label:'⚙ Admin'}]:[])];
   document.getElementById('app').innerHTML=`
 <div class="nav"><div class="nav-inner">
   <span class="nav-logo"><span class="ball">⚽</span>Bolão 2026</span>
@@ -416,7 +462,11 @@ function renderPage(){
   else if(state.tab==='matches')c.innerHTML=renderMatches();
   else if(state.tab==='all')c.innerHTML=renderAll();
   else if(state.tab==='bonus')c.innerHTML=renderBonus();
+  else if(state.tab==='rules')c.innerHTML=renderRules();
   else if(state.tab==='admin')c.innerHTML=renderAdmin();
+  // Inicia/reinicia o tick dos contadores se houver algum na tela
+  if(document.querySelector('[data-countdown]'))startCountdownTick();
+  else if(countdownInterval){clearInterval(countdownInterval);countdownInterval=null;}
 }
 
 function computeRanking(){
@@ -490,10 +540,12 @@ function renderMatches(){
             <option value="">-- selecionar --</option>${hOpt}${aOpt}</select></div>`:''}
       </div>`;
     }
-    return `<div class="match-card">
+    const cd=!locked?countdownTo(m.date):null;
+    return `<div class="match-card" data-match-id="${m.id}">
       <div class="match-header">
         <span class="match-group-tag">${m.type==='group'?'Grupo '+m.group:m.label}</span>
         <span class="match-date">${fmtDate(m.date)}</span>
+        ${cd?`<span class="countdown ${cd.urgency}" data-countdown="${m.date}"><span class="countdown-icon">⏱</span>${cd.text}</span>`:''}
         ${locked?'<span class="match-lock">🔒 Travado</span>':''}
       </div>
       <div class="match-body">
@@ -571,6 +623,89 @@ function filterTeams(id,q){
 async function pickTeam(id,tid){const uid=state.currentUser.id;if(!DATA.bonusBets[uid])DATA.bonusBets[uid]={};DATA.bonusBets[uid][id]=tid;await apiSave('bonusBets',DATA.bonusBets[uid],uid);renderPage();}
 async function clearBonus(id){const uid=state.currentUser.id;if(DATA.bonusBets[uid])delete DATA.bonusBets[uid][id];await apiSave('bonusBets',DATA.bonusBets[uid],uid);renderPage();}
 async function savePlayer(id,v){const uid=state.currentUser.id;if(!DATA.bonusBets[uid])DATA.bonusBets[uid]={};DATA.bonusBets[uid][id]=v;await apiSave('bonusBets',DATA.bonusBets[uid],uid);}
+
+function renderRules(){
+  return `<div class="page">
+  <div class="rules-section">
+    <div class="rules-h"><div class="rules-h-icon">⚽</div>Pontuação dos jogos — fase de grupos</div>
+    <table class="rules-table">
+      <thead><tr><th>Situação</th><th style="text-align:right">Pontos</th></tr></thead>
+      <tbody>
+        <tr><td>Acertou o placar exato (ex: palpitou 2–1, deu 2–1)</td><td class="pts">10</td></tr>
+        <tr><td>Acertou o vencedor, errou o placar (ex: palpitou 2–1, deu 3–0)</td><td class="pts">5</td></tr>
+        <tr><td>Acertou que foi empate, errou o placar (ex: palpitou 1–1, deu 2–2)</td><td class="pts">5</td></tr>
+        <tr><td>Errou o resultado</td><td class="pts zero">0</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="rules-section">
+    <div class="rules-h"><div class="rules-h-icon">🏟️</div>Pontuação dos jogos — mata-mata</div>
+    <p class="rules-p">No mata-mata, se você palpitar empate, o sistema te pergunta se vai pra prorrogação ou pênaltis direto, e quem se classifica. Isso entra na conta.</p>
+    <table class="rules-table">
+      <thead><tr><th>Situação</th><th style="text-align:right">Pontos</th></tr></thead>
+      <tbody>
+        <tr><td>Acertou o placar exato no tempo normal</td><td class="pts">10</td></tr>
+        <tr><td>Acertou o vencedor no tempo normal</td><td class="pts">5</td></tr>
+        <tr><td>Acertou empate <em>e</em> quem se classificou</td><td class="pts">5</td></tr>
+        <tr><td>Acertou empate, errou quem se classificou</td><td class="pts">2</td></tr>
+        <tr><td>Errou tudo</td><td class="pts zero">0</td></tr>
+      </tbody>
+    </table>
+    <div class="rules-note">No mata-mata, o placar conta apenas o tempo normal (e prorrogação). Pênaltis decidem o classificado, mas não influenciam o "placar exato".</div>
+  </div>
+
+  <div class="rules-section">
+    <div class="rules-h"><div class="rules-h-icon gold">🏆</div>Bônus (valem 15 pontos cada)</div>
+    <table class="rules-table">
+      <thead><tr><th>Bônus</th><th style="text-align:right">Pontos</th></tr></thead>
+      <tbody>
+        <tr><td>🏆 Campeão da Copa</td><td class="pts">15</td></tr>
+        <tr><td>🥈 Vice-campeão</td><td class="pts">15</td></tr>
+        <tr><td>👟 Artilheiro (Chuteira de Ouro FIFA)</td><td class="pts">15</td></tr>
+        <tr><td>⚔️ Melhor ataque (mais gols marcados no torneio)</td><td class="pts">15</td></tr>
+        <tr><td>🛡️ Melhor defesa (menos gols sofridos no torneio)</td><td class="pts">15</td></tr>
+      </tbody>
+    </table>
+    <div class="rules-note">Os bônus travam ao final da 1ª rodada da fase de grupos (19/jun, 22h BRT). Depois disso, não dá mais pra editar.</div>
+  </div>
+
+  <div class="rules-section">
+    <div class="rules-h"><div class="rules-h-icon info">⏱</div>Como funciona o travamento</div>
+    <ul class="rules-list">
+      <li>Cada jogo trava <strong>5 minutos antes</strong> do horário de início.</li>
+      <li>Depois do lock, ninguém edita mais o palpite daquele jogo.</li>
+      <li>Os palpites dos outros participantes ficam visíveis na aba <strong>Todos Palpites</strong> só depois que cada jogo trava.</li>
+      <li>Os bônus (campeão, artilheiro, etc.) travam no fim do último jogo da 1ª rodada (19/jun, 22h).</li>
+    </ul>
+  </div>
+
+  <div class="rules-section">
+    <div class="rules-h"><div class="rules-h-icon">🎯</div>Empate na classificação</div>
+    <p class="rules-p">Em caso de empate na pontuação total, o desempate segue esta ordem:</p>
+    <ul class="rules-list">
+      <li><strong>1º critério:</strong> quem cravou mais placares exatos (jogos de 10 pts)</li>
+      <li><strong>2º critério:</strong> quem acertou mais resultados (jogos de 5 pts)</li>
+    </ul>
+  </div>
+  </div>`;
+}
+
+let countdownInterval=null;
+function startCountdownTick(){
+  if(countdownInterval)clearInterval(countdownInterval);
+  countdownInterval=setInterval(()=>{
+    let needsRerender=false;
+    document.querySelectorAll('[data-countdown]').forEach(el=>{
+      const date=el.dataset.countdown;
+      const cd=countdownTo(date);
+      if(!cd){needsRerender=true;return;}
+      el.innerHTML='<span class="countdown-icon">⏱</span>'+cd.text;
+      el.className='countdown '+cd.urgency;
+    });
+    if(needsRerender)renderPage();
+  },1000);
+}
 
 function renderAdmin(){
   const allTeams=Object.entries(TEAMS).map(([id,t])=>({id:+id,...t}));
