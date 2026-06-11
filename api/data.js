@@ -17,6 +17,15 @@ const DEFAULT_USERS = [
   { id: "cadu", name: "Cadu", pin: "8901", initials: "CA" },
 ];
 
+// Migração retroativa: palpites de Arthur e Cadu no jogo 1
+// Jogo 1: México x África do Sul
+// Arthur: México 1 x 0
+// Cadu: México 2 x 0
+const RETROACTIVE_BETS = [
+  { uid: "arthur", matchId: "1", homeScore: 1, awayScore: 0 },
+  { uid: "cadu", matchId: "1", homeScore: 2, awayScore: 0 },
+];
+
 let cache = { data: null, ts: 0 };
 const CACHE_TTL_MS = 2000;
 
@@ -51,15 +60,19 @@ function validateUsers(users) {
     if (!/^[a-z0-9_-]{2,32}$/.test(id) || id === "__admin__") {
       throw new Error(`id inválido: ${id}`);
     }
+
     if (!name || name.length > 60 || /[<>]/.test(name)) {
       throw new Error(`nome inválido para ${id}`);
     }
+
     if (!/^\d{4}$/.test(pin)) {
       throw new Error(`PIN inválido para ${id}`);
     }
+
     if (!/^[A-Z0-9]{1,3}$/.test(initials)) {
       throw new Error(`sigla inválida para ${id}`);
     }
+
     if (ids.has(id)) throw new Error(`id duplicado: ${id}`);
     if (pins.has(pin)) throw new Error(`PIN duplicado: ${pin}`);
 
@@ -72,24 +85,38 @@ function validateUsers(users) {
 
 function normalizeScore(v) {
   if (v === "" || v === null || v === undefined) return "";
+
   const n = Number(v);
+
   if (!Number.isInteger(n) || n < 0 || n > 20) {
     throw new Error("placar inválido: use número inteiro entre 0 e 20");
   }
+
   return n;
 }
 
 function validateBetsMap(value) {
   if (!isPlainObject(value)) throw new Error("value deve ser objeto");
+
   const out = {};
 
   for (const [matchId, bet] of Object.entries(value)) {
     if (!/^\d+$/.test(matchId) || !isPlainObject(bet)) continue;
 
     const clean = {};
-    if ("homeScore" in bet) clean.homeScore = normalizeScore(bet.homeScore);
-    if ("awayScore" in bet) clean.awayScore = normalizeScore(bet.awayScore);
-    if (["et", "pk", ""].includes(bet.etType)) clean.etType = bet.etType;
+
+    if ("homeScore" in bet) {
+      clean.homeScore = normalizeScore(bet.homeScore);
+    }
+
+    if ("awayScore" in bet) {
+      clean.awayScore = normalizeScore(bet.awayScore);
+    }
+
+    if (["et", "pk", ""].includes(bet.etType)) {
+      clean.etType = bet.etType;
+    }
+
     if (["home", "away", ""].includes(bet.advancedTeam)) {
       clean.advancedTeam = bet.advancedTeam;
     }
@@ -102,10 +129,12 @@ function validateBetsMap(value) {
 
 function validateBonusBetsMap(value) {
   if (!isPlainObject(value)) throw new Error("value deve ser objeto");
+
   const out = {};
 
   for (const [key, val] of Object.entries(value)) {
     const cleanKey = String(key).trim();
+
     if (!/^[a-z0-9_-]{1,40}$/.test(cleanKey)) continue;
 
     if (typeof val === "number") {
@@ -121,6 +150,7 @@ function validateBonusBetsMap(value) {
 
 function validateResultsMap(value) {
   if (!isPlainObject(value)) throw new Error("value deve ser objeto");
+
   const out = {};
 
   for (const [matchId, result] of Object.entries(value)) {
@@ -133,7 +163,10 @@ function validateResultsMap(value) {
 
     if (clean.homeScore === "" || clean.awayScore === "") continue;
 
-    if (["et", "pk"].includes(result.etType)) clean.etType = result.etType;
+    if (["et", "pk"].includes(result.etType)) {
+      clean.etType = result.etType;
+    }
+
     if (["home", "away"].includes(result.advancedTeam)) {
       clean.advancedTeam = result.advancedTeam;
     }
@@ -146,6 +179,7 @@ function validateResultsMap(value) {
 
 function validateMatchTeams(value) {
   if (!isPlainObject(value)) throw new Error("value deve ser objeto");
+
   const out = {};
 
   for (const [matchId, mt] of Object.entries(value)) {
@@ -155,6 +189,7 @@ function validateMatchTeams(value) {
     const awayId = Number(mt.awayId);
 
     if (!Number.isInteger(homeId) || !Number.isInteger(awayId)) continue;
+
     if (
       homeId < 1 ||
       homeId > 48 ||
@@ -211,8 +246,46 @@ async function getUsers() {
   return DEFAULT_USERS;
 }
 
+async function applyRetroactiveBets(users) {
+  const migrationKey = "migration:retro-bets-mexico-arthur-cadu-v1";
+
+  const alreadyApplied = await redis(["GET", migrationKey]).catch(() => null);
+
+  if (alreadyApplied === "1") {
+    return;
+  }
+
+  const validIds = new Set((users || []).map((u) => u.id));
+
+  for (const item of RETROACTIVE_BETS) {
+    if (!validIds.has(item.uid)) continue;
+
+    const redisKey = `bets:${item.uid}`;
+    const raw = await redis(["GET", redisKey]).catch(() => null);
+
+    let current = safeJsonParse(raw, {});
+
+    if (!isPlainObject(current)) {
+      current = {};
+    }
+
+    current[item.matchId] = {
+      ...(current[item.matchId] || {}),
+      homeScore: item.homeScore,
+      awayScore: item.awayScore,
+    };
+
+    await redis(["SET", redisKey, JSON.stringify(current)]);
+  }
+
+  await redis(["SET", migrationKey, "1"]);
+}
+
 async function fetchAll() {
   const users = await getUsers();
+
+  await applyRetroactiveBets(users);
+
   const ids = users.map((u) => u.id);
 
   const betKeys = ids.map((u) => `bets:${u}`);
