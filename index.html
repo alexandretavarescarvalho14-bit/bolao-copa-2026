@@ -109,8 +109,10 @@ body{font-family:var(--font);background:var(--bg-tertiary);min-height:100vh;colo
 .score-sep{font-size:.9rem;color:var(--text-tertiary);font-weight:700}
 .match-result-badge{font-size:12px;font-weight:700;padding:.3rem .8rem;border-radius:999px;display:inline-flex;align-items:center;gap:.3rem;font-family:var(--display)}
 .badge-exact{background:var(--green-light);color:var(--green-d)}
+.badge-inter{background:#e8f0fe;color:#1a56c4}
 .badge-winner{background:var(--gold-light);color:#8a6500}
 .badge-miss{background:rgba(214,59,59,.12);color:#a82626}
+.badge-inverse{background:rgba(214,59,59,.18);color:#a82626;font-weight:800}
 .badge-pending{background:var(--bg-secondary);color:var(--text-secondary)}
 .result-line{margin-top:.5rem;font-size:12px;color:var(--text-secondary);font-weight:500}
 .et-section{margin-top:.6rem;padding:.65rem .8rem;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px dashed var(--border-strong)}
@@ -372,8 +374,16 @@ function calcPoints(p,r){
   if(!p||!scoreFilled(p.homeScore)||!scoreFilled(p.awayScore))return null;
   const rH=scoreValue(r.homeScore),rA=scoreValue(r.awayScore),pH=scoreValue(p.homeScore),pA=scoreValue(p.awayScore);
   if(pH===rH&&pA===rA)return 10;
+  // Acerto Invertido: placar exatamente oposto (só vale quando há vencedor)
+  if(rH!==rA&&pH===rA&&pA===rH)return -2;
   const rR=rH>rA?'H':rH<rA?'A':'D',pR=pH>pA?'H':pH<pA?'A':'D';
-  return pR===rR?5:0;
+  if(pR===rR){
+    // Acerto Intermediário: acertou vencedor/empate + placar de um time ou diferença de gols (≠0)
+    const diff=rH-rA;
+    if(pH===rH||pA===rA||(diff!==0&&(pH-pA)===diff))return 6;
+    return 5;
+  }
+  return 0;
 }
 function calcKOPoints(p,r){
   if(!r||r.homeScore===undefined)return null;
@@ -381,16 +391,23 @@ function calcKOPoints(p,r){
   const rH=scoreValue(r.homeScore),rA=scoreValue(r.awayScore),pH=scoreValue(p.homeScore),pA=scoreValue(p.awayScore);
   if(pH===rH&&pA===rA)return 10;
   if(rH===rA){
-    // Resultado real empatado: o diferencial é acertar o classificado.
+    // Resultado empatado no tempo normal: o diferencial é acertar o classificado.
     if(r.advancedTeam&&p.advancedTeam&&r.advancedTeam===p.advancedTeam)return 5;
     if(p.advancedTeam)return 2;
     return 0;
   }
-  // Resultado real teve vencedor no tempo normal/prorrogação.
-  // Quem palpitou empate não deve ganhar pontos por "vencedor".
+  // Acerto Invertido: placar exatamente oposto (só quando há vencedor no tempo normal)
+  if(pH===rA&&pA===rH)return -2;
+  // Quem palpitou empate não pontua quando o resultado teve vencedor
   if(pH===pA)return 0;
   const rW=rH>rA?'home':'away',pW=pH>pA?'home':'away';
-  return rW===pW?5:0;
+  if(rW===pW){
+    // Acerto Intermediário: acertou vencedor + placar de um time ou diferença de gols
+    const diff=rH-rA;
+    if(pH===rH||pA===rA||(diff!==0&&(pH-pA)===diff))return 6;
+    return 5;
+  }
+  return 0;
 }
 
 let state={currentUser:null,tab:'matches',matchFilter:'upcoming',selectedUser:null,pinAttempts:0,adminMode:false};
@@ -581,18 +598,18 @@ function renderPage(){
 
 function computeRanking(){
   return USERS.map((u,i)=>{
-    let pts=0,exact=0,winner=0;
+    let pts=0,exact=0,inter=0,winner=0;
     RAW_MATCHES.forEach(m=>{
       const res=DATA.results[m.id];if(!res||res.homeScore===undefined)return;
       const p=(DATA.bets[u.id]||{})[m.id];if(!p)return;
       const mp=m.type==='group'?calcPoints(p,res):calcKOPoints(p,res);
-      if(mp===10)exact++;else if(mp===5)winner++;
-      pts+=(mp||0);
+      if(mp===10)exact++;else if(mp===6)inter++;else if(mp===5)winner++;
+      if(mp!==null)pts+=mp;
     });
     const bb=DATA.bonusBets[u.id]||{};
     BONUS_ITEMS.forEach(bi=>{const c=DATA.bonusResults[bi.id];if(c&&bb[bi.id]&&String(c)===String(bb[bi.id]))pts+=bi.pts;});
-    return {user:u,idx:i,pts,exact,winner};
-  }).sort((a,b)=>b.pts-a.pts||b.exact-a.exact||b.winner-a.winner);
+    return {user:u,idx:i,pts,exact,inter,winner};
+  }).sort((a,b)=>b.pts-a.pts||b.exact-a.exact||b.inter-a.inter||b.winner-a.winner);
 }
 function renderRanking(){
   const rows=computeRanking(),uid=state.currentUser.id,medals=['🥇','🥈','🥉'];
@@ -600,7 +617,7 @@ function renderRanking(){
   return `<div class="page"><div class="rank-card">${rows.map((r,i)=>{const s=getAvatarStyle(r.idx);return `<div class="rank-row${r.user.id===uid?' me':''}${i===0?' podium1':''}">
     <div class="rank-pos" style="${i<3?'color:'+posColors[i]:'color:var(--text-tertiary)'}">${medals[i]||i+1}</div>
     <div class="rank-avatar" style="background:${s.bg};color:${s.color}">${r.user.initials}</div>
-    <div style="flex:1"><div class="rank-name">${r.user.name}</div><div class="rank-detail">${r.exact} placares exatos · ${r.winner} resultados</div></div>
+    <div style="flex:1"><div class="rank-name">${r.user.name}</div><div class="rank-detail">${r.exact} exatos · ${r.inter} intermediários · ${r.winner} básicos</div></div>
     <div style="text-align:right"><div class="rank-pts">${r.pts}</div><div class="rank-pts-label">pontos</div></div></div>`;}).join('')}</div>
     <div style="font-size:12px;color:var(--text-secondary);text-align:center;margin-top:.75rem">Atualizado a cada carregamento · toque em ↻ para recarregar</div></div>`;
 }
@@ -628,8 +645,10 @@ function renderMatches(){
     if(res&&res.homeScore!==undefined){
       const pts=isKO?calcKOPoints(bet,res):calcPoints(bet,res);
       if(pts===10)badge=`<span class="match-result-badge badge-exact">+10 pts ✓</span>`;
+      else if(pts===6)badge=`<span class="match-result-badge badge-inter">+6 pts</span>`;
       else if(pts===5)badge=`<span class="match-result-badge badge-winner">+5 pts</span>`;
       else if(pts===2)badge=`<span class="match-result-badge badge-winner">+2 pts</span>`;
+      else if(pts===-2)badge=`<span class="match-result-badge badge-inverse">-2 pts ✗</span>`;
       else if(pts===0)badge=`<span class="match-result-badge badge-miss">0 pts</span>`;
       else badge=`<span class="match-result-badge badge-pending">Sem palpite</span>`;
     }
@@ -692,7 +711,7 @@ function renderAll(){
         ${USERS.map(u=>{const bet=(DATA.bets[u.id]||{})[m.id];
           if(!bet||bet.homeScore===undefined)return `<span style="text-align:center;color:var(--text-secondary)">–</span>`;
           const pts=isKO?calcKOPoints(bet,res):calcPoints(bet,res);
-          const color=pts===10?'#0e7a40':pts>=2?'#8a6500':(pts===0&&res?'#a02020':'inherit');
+          const color=pts===10?'#0e7a40':pts>=2?'#8a6500':pts===-2?'#a82626':(pts===0&&res?'#a02020':'inherit');
           return `<span style="text-align:center;font-weight:600;color:${color}">${bet.homeScore}–${bet.awayScore}${pts!==null?` (${pts})`:''}</span>`;
         }).join('')}
       </div></div>`;
@@ -739,26 +758,29 @@ function renderRules(){
   <div class="rules-section">
     <div class="rules-h"><div class="rules-h-icon">⚽</div>Pontuação dos jogos — fase de grupos</div>
     <table class="rules-table">
-      <thead><tr><th>Situação</th><th style="text-align:right">Pontos</th></tr></thead>
+      <thead><tr><th>Tipo de acerto</th><th>Exemplo</th><th style="text-align:right">Pontos</th></tr></thead>
       <tbody>
-        <tr><td>Acertou o placar exato (ex: palpitou 2–1, deu 2–1)</td><td class="pts">10</td></tr>
-        <tr><td>Acertou o vencedor, errou o placar (ex: palpitou 2–1, deu 3–0)</td><td class="pts">5</td></tr>
-        <tr><td>Acertou que foi empate, errou o placar (ex: palpitou 1–1, deu 2–2)</td><td class="pts">5</td></tr>
-        <tr><td>Errou o resultado</td><td class="pts zero">0</td></tr>
+        <tr><td><strong>Acerto Completo</strong> — placar exato</td><td style="font-size:12px;color:var(--text-secondary)">Palpite 2×0 → Resultado 2×0</td><td class="pts">10</td></tr>
+        <tr><td><strong>Acerto Intermediário</strong> — acertou o vencedor/empate e também o placar de um time <em>ou</em> a diferença de gols</td><td style="font-size:12px;color:var(--text-secondary)">Palpite 3×0 → Resultado 2×0<br>Palpite 4×1 → Resultado 3×0</td><td class="pts">6</td></tr>
+        <tr><td><strong>Acerto Básico</strong> — acertou apenas o vencedor ou o empate</td><td style="font-size:12px;color:var(--text-secondary)">Palpite 2×1 → Resultado 4×0<br>Palpite 2×2 → Resultado 1×1</td><td class="pts">5</td></tr>
+        <tr><td><strong>Acerto Invertido</strong> — palpitou exatamente o placar oposto</td><td style="font-size:12px;color:var(--text-secondary)">Palpite 2×0 → Resultado 0×2</td><td class="pts" style="color:var(--red)">−2</td></tr>
+        <tr><td><strong>Nenhum acerto</strong></td><td style="font-size:12px;color:var(--text-secondary)">Palpite 3×0 → Resultado 1×2</td><td class="pts zero">0</td></tr>
       </tbody>
     </table>
   </div>
 
   <div class="rules-section">
     <div class="rules-h"><div class="rules-h-icon">🏟️</div>Pontuação dos jogos — mata-mata</div>
-    <p class="rules-p">No mata-mata, se você palpitar empate, o sistema te pergunta se vai pra prorrogação ou pênaltis direto, e quem se classifica. Isso entra na conta.</p>
+    <p class="rules-p">No mata-mata valem as mesmas categorias de acerto da fase de grupos para o placar do tempo normal. Se você palpitar empate, o sistema te pergunta quem se classifica — isso conta para o Acerto Básico.</p>
     <table class="rules-table">
       <thead><tr><th>Situação</th><th style="text-align:right">Pontos</th></tr></thead>
       <tbody>
-        <tr><td>Acertou o placar exato no tempo normal</td><td class="pts">10</td></tr>
+        <tr><td>Placar exato no tempo normal</td><td class="pts">10</td></tr>
+        <tr><td>Acertou o vencedor + placar de um time ou diferença de gols</td><td class="pts">6</td></tr>
         <tr><td>Acertou o vencedor no tempo normal</td><td class="pts">5</td></tr>
         <tr><td>Acertou empate <em>e</em> quem se classificou</td><td class="pts">5</td></tr>
         <tr><td>Acertou empate, errou quem se classificou</td><td class="pts">2</td></tr>
+        <tr><td>Palpitou placar exatamente oposto</td><td class="pts" style="color:var(--red)">−2</td></tr>
         <tr><td>Errou tudo</td><td class="pts zero">0</td></tr>
       </tbody>
     </table>
@@ -794,8 +816,9 @@ function renderRules(){
     <div class="rules-h"><div class="rules-h-icon">🎯</div>Empate na classificação</div>
     <p class="rules-p">Em caso de empate na pontuação total, o desempate segue esta ordem:</p>
     <ul class="rules-list">
-      <li><strong>1º critério:</strong> quem cravou mais placares exatos (jogos de 10 pts)</li>
-      <li><strong>2º critério:</strong> quem acertou mais resultados (jogos de 5 pts)</li>
+      <li><strong>1º critério:</strong> quem cravou mais placares exatos (10 pts)</li>
+      <li><strong>2º critério:</strong> quem tem mais acertos intermediários (6 pts)</li>
+      <li><strong>3º critério:</strong> quem tem mais acertos básicos (5 pts)</li>
     </ul>
   </div>
   </div>`;
