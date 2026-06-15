@@ -240,9 +240,6 @@ body{font-family:var(--font);background:var(--bg-tertiary);min-height:100vh;colo
 <div id="app"><div class="loading">Carregando bolão...</div></div>
 
 <script>
-// ===== USUÁRIOS =====
-// A lista autoritativa vem do banco (DATA.users).
-// Este array serve apenas como fallback antes do primeiro load.
 let USERS = [
   {id:'alexandre', name:'Alexandre', pin:'1234', initials:'AL'},
   {id:'joao',      name:'João',      pin:'2345', initials:'JO'},
@@ -643,18 +640,18 @@ function renderPage(){
 
 function computeRanking(){
   return USERS.map((u,i)=>{
-    let pts=0,exact=0,inter=0,winner=0;
+    let pts=0,exact=0,inter=0,winner=0,inverse=0;
     RAW_MATCHES.forEach(m=>{
       const res=DATA.results[m.id];if(!res||res.homeScore===undefined)return;
       const rawBet=(DATA.bets[u.id]||{})[m.id];
       const p=rawBet||(isLocked(m)?{homeScore:0,awayScore:0}:null);if(!p)return;
       const mp=m.type==='group'?calcPoints(p,res):calcKOPoints(p,res);
-      if(mp===10)exact++;else if(mp===6)inter++;else if(mp===5)winner++;
+      if(mp===10)exact++;else if(mp===6)inter++;else if(mp===5)winner++;else if(mp===-2)inverse++;
       if(mp!==null)pts+=mp;
     });
     const bb=DATA.bonusBets[u.id]||{};
     BONUS_ITEMS.forEach(bi=>{const c=DATA.bonusResults[bi.id];if(c&&bb[bi.id]&&String(c)===String(bb[bi.id]))pts+=bi.pts;});
-    return {user:u,idx:i,pts,exact,inter,winner};
+    return {user:u,idx:i,pts,exact,inter,winner,inverse};
   }).sort((a,b)=>b.pts-a.pts||b.exact-a.exact||b.inter-a.inter||b.winner-a.winner);
 }
 function renderRanking(){
@@ -663,7 +660,7 @@ function renderRanking(){
   return `<div class="page"><div class="rank-card">${rows.map((r,i)=>{const s=getAvatarStyle(r.idx);return `<div class="rank-row${r.user.id===uid?' me':''}${i===0?' podium1':''}">
     <div class="rank-pos" style="${i<3?'color:'+posColors[i]:'color:var(--text-tertiary)'}">${medals[i]||i+1}</div>
     <div class="rank-avatar" style="background:${s.bg};color:${s.color}">${r.user.initials}</div>
-    <div style="flex:1"><div class="rank-name">${r.user.name}</div><div class="rank-detail">${r.exact} exatos · ${r.inter} intermediários · ${r.winner} básicos</div></div>
+    <div style="flex:1"><div class="rank-name">${r.user.name}</div><div class="rank-detail">${r.exact} exatos · ${r.inter} intermediários · ${r.winner} básicos${r.inverse>0?` · <span style="color:var(--red)">${r.inverse} invertido(s)</span>`:''}</div></div>
     <div style="text-align:right"><div class="rank-pts">${r.pts}</div><div class="rank-pts-label">pontos</div></div></div>`;}).join('')}</div>
     <div style="font-size:12px;color:var(--text-secondary);text-align:center;margin-top:.75rem">Atualizado a cada carregamento · toque em ↻ para recarregar</div></div>`;
 }
