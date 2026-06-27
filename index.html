@@ -446,25 +446,32 @@ function calcKOPoints(p,r){
   if(!r||r.homeScore===undefined)return null;
   if(!p||!scoreFilled(p.homeScore)||!scoreFilled(p.awayScore))return null;
   const rH=scoreValue(r.homeScore),rA=scoreValue(r.awayScore),pH=scoreValue(p.homeScore),pA=scoreValue(p.awayScore);
-  if(pH===rH&&pA===rA)return 10;
-  if(rH===rA){
+  let base;
+  if(pH===rH&&pA===rA){base=10;}
+  else if(rH===rA){
     // Resultado empatado no tempo normal: o diferencial é acertar o classificado.
-    if(r.advancedTeam&&p.advancedTeam&&r.advancedTeam===p.advancedTeam)return 5;
-    if(p.advancedTeam)return 2;
-    return 0;
+    if(r.advancedTeam&&p.advancedTeam&&r.advancedTeam===p.advancedTeam)base=5;
+    else if(p.advancedTeam)base=2;
+    else base=0;
+  } else if(pH===rA&&pA===rH){base=-2;} // Acerto Invertido
+  else if(pH===pA){base=0;} // palpitou empate mas resultado teve vencedor
+  else {
+    const rW=rH>rA?'home':'away',pW=pH>pA?'home':'away';
+    if(rW===pW){
+      const diff=rH-rA;
+      if(pH===rH||pA===rA||(diff!==0&&(pH-pA)===diff))base=6;
+      else base=5;
+    } else base=0;
   }
-  // Acerto Invertido: placar exatamente oposto (só quando há vencedor no tempo normal)
-  if(pH===rA&&pA===rH)return -2;
-  // Quem palpitou empate não pontua quando o resultado teve vencedor
-  if(pH===pA)return 0;
-  const rW=rH>rA?'home':'away',pW=pH>pA?'home':'away';
-  if(rW===pW){
-    // Acerto Intermediário: acertou vencedor + placar de um time ou diferença de gols
-    const diff=rH-rA;
-    if(pH===rH||pA===rA||(diff!==0&&(pH-pA)===diff))return 6;
-    return 5;
+  // Bônus prorrogação: +3 se acertou o placar exato da prorrogação
+  let bonus=0;
+  if(r.etType==='et'&&r.etHomeScore!==undefined&&r.etAwayScore!==undefined&&
+     p.etHomeScore!==undefined&&p.etAwayScore!==undefined&&
+     scoreValue(p.etHomeScore)===scoreValue(r.etHomeScore)&&
+     scoreValue(p.etAwayScore)===scoreValue(r.etAwayScore)){
+    bonus=3;
   }
-  return 0;
+  return base+bonus;
 }
 
 let state={currentUser:null,tab:'matches',matchFilter:'upcoming',selectedUser:null,pinAttempts:0,adminMode:false};
@@ -712,7 +719,9 @@ function renderMatches(){
     let badge='';
     if(res&&res.homeScore!==undefined){
       const pts=isKO?calcKOPoints(bet,res):calcPoints(bet,res);
-      if(pts===10)badge=`<span class="match-result-badge badge-exact">+10 pts ✓</span>`;
+      if(pts===13)badge=`<span class="match-result-badge badge-exact">+13 pts ✓ +bônus prorr.</span>`;
+      else if(pts===10)badge=`<span class="match-result-badge badge-exact">+10 pts ✓</span>`;
+      else if(pts===8)badge=`<span class="match-result-badge badge-exact">+8 pts +bônus prorr.</span>`;
       else if(pts===6)badge=`<span class="match-result-badge badge-inter">+6 pts</span>`;
       else if(pts===5)badge=`<span class="match-result-badge badge-winner">+5 pts</span>`;
       else if(pts===2)badge=`<span class="match-result-badge badge-winner">+2 pts</span>`;
@@ -735,6 +744,13 @@ function renderMatches(){
         ${(bet.etType==='et'||bet.etType==='pk')?`<div class="et-row"><span class="et-label">Quem se classifica:</span>
           <select class="et-select" onchange="setET(${m.id},'advancedTeam',this.value)">
             <option value="">-- selecionar --</option>${hOpt}${aOpt}</select></div>`:''}
+        ${bet.etType==='et'?`<div class="et-row"><span class="et-label" style="color:var(--green-d);font-weight:600">Placar na prorrogação <span style="font-size:10px;background:var(--green-light);color:var(--green-d);padding:.1rem .4rem;border-radius:999px;font-weight:700">+3 pts bônus</span></span></div>
+        <div class="et-row" style="gap:.5rem;align-items:center">
+          <input class="score-input" type="number" min="0" max="20" value="${bet.etHomeScore??''}" placeholder="–" oninput="setET(${m.id},'etHomeScore',this.value)" style="width:52px">
+          <span style="color:var(--text-secondary);font-weight:600">×</span>
+          <input class="score-input" type="number" min="0" max="20" value="${bet.etAwayScore??''}" placeholder="–" oninput="setET(${m.id},'etAwayScore',this.value)" style="width:52px">
+          <span style="font-size:11px;color:var(--text-secondary)">(acerte para ganhar +3 pts extras)</span>
+        </div>`:''}
       </div>`;
     }
     const cd=!locked?countdownTo(m.date):null;
@@ -757,7 +773,7 @@ function renderMatches(){
         </div>
         ${et}
         ${isAutoBet&&locked?`<div style="margin-top:.4rem;font-size:11px;color:var(--text-tertiary);font-style:italic">⚠ Palpite automático — 0×0 aplicado por não palpitar</div>`:''}
-        ${res&&res.homeScore!==undefined?`<div class="result-line">Resultado oficial: ${res.homeScore}–${res.awayScore}${res.advancedTeam?' (classificado: '+(res.advancedTeam==='home'?hN:aN)+')':''}</div>`:''}
+        ${res&&res.homeScore!==undefined?`<div class="result-line">Resultado oficial: ${res.homeScore}–${res.awayScore}${res.etType==='et'&&res.etHomeScore!==undefined?` · Prorr.: ${res.etHomeScore}–${res.etAwayScore}`:''}${res.advancedTeam?' (classificado: '+(res.advancedTeam==='home'?hN:aN)+')':''}</div>`:''}
         ${badge?`<div style="margin-top:.35rem">${badge}</div>`:''}
       </div></div>`;
   }).join('')}</div>`;
@@ -861,7 +877,12 @@ function renderRules(){
         <tr><td>Errou tudo</td><td class="pts zero">0</td></tr>
       </tbody>
     </table>
-    <div class="rules-note">No mata-mata, o placar conta apenas o tempo normal (e prorrogação). Pênaltis decidem o classificado, mas não influenciam o "placar exato".</div>
+    <div style="margin-top:.85rem;padding:.75rem;background:linear-gradient(135deg,var(--green-light),var(--bg-secondary));border:1.5px solid var(--green);border-radius:var(--radius-md)">
+      <div style="font-family:var(--display);font-size:13px;font-weight:700;color:var(--green-d);margin-bottom:.4rem">Bônus prorrogação — +3 pts extras</div>
+      <p style="font-size:13px;line-height:1.5;color:var(--text-primary);margin:0">Quando um jogo vai para prorrogação, você pode palpitar também o <strong>placar da prorrogação</strong>. Se acertar exatamente, ganha <strong>+3 pontos</strong> adicionais — independente de quantos pontos já ganhou pelo tempo normal.</p>
+      <div style="margin-top:.5rem;font-size:12px;color:var(--text-secondary)">Exemplo: palpitou 1×1 (exato) + prorrogação + 2×1 para África do Sul → <strong style="color:var(--green-d)">10 + 3 = 13 pts</strong></div>
+    </div>
+    <div class="rules-note" style="margin-top:.65rem">No mata-mata, o placar base conta apenas o tempo normal. Pênaltis decidem o classificado, mas não dão bônus de prorrogação.</div>
   </div>
 
   <div class="rules-section">
@@ -932,8 +953,9 @@ function renderAdmin(){
         <input class="admin-score" type="number" min="0" id="ar-h-${m.id}" value="${res.homeScore??''}" placeholder="–">
         <span>×</span>
         <input class="admin-score" type="number" min="0" id="ar-a-${m.id}" value="${res.awayScore??''}" placeholder="–">
-        ${isKO?`<select class="et-select" id="ar-et-${m.id}"><option value=""${!res.etType?' selected':''}>Tempo normal</option><option value="et"${res.etType==='et'?' selected':''}>Prorrogação</option><option value="pk"${res.etType==='pk'?' selected':''}>Pênaltis</option></select>
-        <select class="et-select" id="ar-adv-${m.id}"><option value="">Classificado</option><option value="home"${res.advancedTeam==='home'?' selected':''}>${hN}</option><option value="away"${res.advancedTeam==='away'?' selected':''}>${aN}</option></select>`:''}
+        ${isKO?`<select class="et-select" id="ar-et-${m.id}" onchange="renderPage()"><option value=""${!res.etType?' selected':''}>Tempo normal</option><option value="et"${res.etType==='et'?' selected':''}>Prorrogação</option><option value="pk"${res.etType==='pk'?' selected':''}>Pênaltis</option></select>
+        <select class="et-select" id="ar-adv-${m.id}"><option value="">Classificado</option><option value="home"${res.advancedTeam==='home'?' selected':''}>${hN}</option><option value="away"${res.advancedTeam==='away'?' selected':''}>${aN}</option></select>
+        ${res.etType==='et'?`<span style="font-size:11px;color:var(--text-secondary);font-weight:600">Prorr.:</span><input class="admin-score" type="number" min="0" id="ar-eth-${m.id}" value="${res.etHomeScore??''}" placeholder="–" style="width:52px"><span>×</span><input class="admin-score" type="number" min="0" id="ar-eta-${m.id}" value="${res.etAwayScore??''}" placeholder="–" style="width:52px">`:''}`:''}
         <button class="btn-confirm" onclick="confirmResult(${m.id},${isKO})">${hasResult?'Atualizar':'Confirmar'}</button>
         ${hasResult?`<span class="confirmed-tag">✓ ${res.homeScore}–${res.awayScore}</span><button class="btn-clear" onclick="clearResult(${m.id})">Limpar</button>`:''}
       </div></div>`;
@@ -1021,7 +1043,7 @@ async function saveBet(id,field,val){
 
   if(m&&m.type!=='group'){
     const b=DATA.bets[uid][id],pH=b.homeScore,pA=b.awayScore;
-    if(!scoreFilled(pH)||!scoreFilled(pA)||scoreValue(pH)!==scoreValue(pA)){delete b.etType;delete b.advancedTeam;}
+    if(!scoreFilled(pH)||!scoreFilled(pA)||scoreValue(pH)!==scoreValue(pA)){delete b.etType;delete b.advancedTeam;delete b.etHomeScore;delete b.etAwayScore;}
     setTimeout(renderPage,60);
   }
   await apiSave('bets',DATA.bets[uid],uid);
@@ -1044,7 +1066,15 @@ async function confirmResult(id,isKO){
     +`Lançar como RESULTADO OFICIAL (vale para a pontuação de todos):\n\n${hN} ${+h} × ${+a} ${aN}\n\nConfirmar?`;
   if(!confirm(msg))return;
   const r={homeScore:+h,awayScore:+a};
-  if(isKO){const et=document.getElementById('ar-et-'+id)?.value,adv=document.getElementById('ar-adv-'+id)?.value;if(et)r.etType=et;if(adv)r.advancedTeam=adv;}
+  if(isKO){
+    const et=document.getElementById('ar-et-'+id)?.value,adv=document.getElementById('ar-adv-'+id)?.value;
+    if(et)r.etType=et;if(adv)r.advancedTeam=adv;
+    if(et==='et'){
+      const eth=document.getElementById('ar-eth-'+id)?.value,eta=document.getElementById('ar-eta-'+id)?.value;
+      if(eth!==''&&eth!==undefined)r.etHomeScore=+eth;
+      if(eta!==''&&eta!==undefined)r.etAwayScore=+eta;
+    }
+  }
   DATA.results[id]=r;await apiSave('results',DATA.results);renderPage();
   showToast('Resultado oficial salvo.');
 }
