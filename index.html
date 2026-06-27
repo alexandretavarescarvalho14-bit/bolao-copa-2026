@@ -700,6 +700,8 @@ function renderMatches(){
   if(state.matchFilter==='upcoming')list=RAW_MATCHES.filter(m=>!isLocked(m));
   else if(state.matchFilter==='group')list=RAW_MATCHES.filter(m=>m.type==='group');
   else if(state.matchFilter==='knockout')list=RAW_MATCHES.filter(m=>m.type!=='group');
+  // Sempre em ordem cronológica (data/hora real do jogo), não pela ordem do array
+  list=[...list].sort((a,b)=>new Date(a.date)-new Date(b.date));
   return `<div class="page"><div class="filter-bar">${filters.map(f=>`<button class="filter-btn${state.matchFilter===f.id?' active':''}" onclick="setFilter('${f.id}')">${f.label}</button>`).join('')}</div>
   ${list.length===0?'<div class="loading">Nenhum jogo nesse filtro.</div>':''}
   ${list.map(m=>{
@@ -938,9 +940,9 @@ function renderAdmin(){
   }).join('')}
   <div class="section-title">Confrontos do mata-mata</div>
   <div style="font-size:12px;color:var(--text-secondary);margin-bottom:.75rem">Defina os times de cada jogo eliminatório quando os classificados forem conhecidos.</div>
-  ${RAW_MATCHES.filter(m=>m.type!=='group').map(m=>{
+  ${RAW_MATCHES.filter(m=>m.type!=='group').sort((a,b)=>new Date(a.date)-new Date(b.date)).map(m=>{
     const mt=DATA.matchTeams[m.id]||{};
-    return `<div class="admin-match"><div class="admin-match-title">${m.label}</div>
+    return `<div class="admin-match"><div class="admin-match-title">${m.label} <span style="font-weight:400;color:var(--text-secondary)">${fmtDate(m.date)}</span></div>
       <div class="admin-inputs">
         <select class="et-select" id="mt-h-${m.id}" onchange="saveMatchTeam(${m.id})"><option value="">Mandante</option>${allTeams.map(t=>`<option value="${t.id}"${mt.homeId==t.id?' selected':''}>${t.name}</option>`).join('')}</select>
         <span>×</span>
