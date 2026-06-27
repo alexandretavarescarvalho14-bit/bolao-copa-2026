@@ -762,7 +762,8 @@ function renderMatches(){
 }
 
 function renderAll(){
-  const locked=RAW_MATCHES.filter(m=>isLocked(m));
+  // Mais recentes primeiro — reflete os últimos jogos sem precisar rolar
+  const locked=RAW_MATCHES.filter(m=>isLocked(m)).sort((a,b)=>new Date(b.date)-new Date(a.date));
   if(locked.length===0)return `<div class="page"><div class="loading">Nenhum jogo travado ainda. Os palpites de todos aparecem aqui depois que cada jogo trava.</div></div>`;
   return `<div class="page">
   <p class="all-bets-hint">Palpites visíveis após o travamento de cada jogo.</p>
@@ -919,7 +920,7 @@ function renderAdmin(){
   return `<div class="page">
   <div class="section-title">⚠️ Resultados oficiais — afetam a pontuação de todos</div>
   <div style="font-size:12px;color:var(--text-secondary);margin-bottom:.75rem">Aqui você lança o <strong>resultado real do jogo</strong> (não é palpite). Placar do tempo normal. Em mata-mata, marque prorrogação/pênaltis e o classificado quando houver empate.</div>
-  ${RAW_MATCHES.filter(m=>isLocked(m)).map(m=>{
+  ${RAW_MATCHES.filter(m=>isLocked(m)).sort((a,b)=>new Date(b.date)-new Date(a.date)).map(m=>{
     const res=DATA.results[m.id]||{},hT=teamOf(m,'home'),aT=teamOf(m,'away'),isKO=m.type!=='group';
     const hN=hT?hT.name:'A definir',aN=aT?aT.name:'A definir';
     const hasResult=res.homeScore!==undefined;
@@ -963,7 +964,7 @@ function renderAdmin(){
       </select>
       <select class="et-select" id="retro-mid" style="min-width:200px">
         <option value="">Jogo...</option>
-        ${RAW_MATCHES.filter(m=>isLocked(m)).map(m=>{
+        ${RAW_MATCHES.filter(m=>isLocked(m)).sort((a,b)=>new Date(b.date)-new Date(a.date)).map(m=>{
           const hT=teamOf(m,'home'),aT=teamOf(m,'away');
           const hN=hT?hT.name:(m.home?TEAMS[m.home]?.name:'?');
           const aN=aT?aT.name:(m.away?TEAMS[m.away]?.name:'?');
