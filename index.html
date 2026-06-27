@@ -240,6 +240,9 @@ body{font-family:var(--font);background:var(--bg-tertiary);min-height:100vh;colo
 <div id="app"><div class="loading">Carregando bolão...</div></div>
 
 <script>
+// ===== USUÁRIOS =====
+// A lista autoritativa vem do banco (DATA.users).
+// Este array serve apenas como fallback antes do primeiro load.
 let USERS = [
   {id:'alexandre', name:'Alexandre', pin:'1234', initials:'AL'},
   {id:'joao',      name:'João',      pin:'2345', initials:'JO'},
@@ -404,6 +407,7 @@ function isBonusLocked(){return new Date()>=BONUS_DEADLINE}
 function fmtDate(d){return new Date(d).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:APP_TIME_ZONE})+'h BRT'}
 function flagImg(iso){return iso?`<img class="flag" src="https://flagcdn.com/w40/${iso}.png" alt="">`:''}
 
+// Calcula tempo restante até o lock (5 min antes do jogo) e devolve string formatada
 function countdownTo(matchDate){
   const lockMs=getLockTime(matchDate).getTime();
   const diff=lockMs-Date.now();
@@ -413,8 +417,8 @@ function countdownTo(matchDate){
   const m=Math.floor((diff%3600000)/60000);
   const s=Math.floor((diff%60000)/1000);
   let urgency='';
-  if(diff<60*60*1000)urgency='urgent';
-  else if(diff<6*60*60*1000)urgency='warning';
+  if(diff<60*60*1000)urgency='urgent';        // < 1h: vermelho pulsando
+  else if(diff<6*60*60*1000)urgency='warning'; // < 6h: amarelo
   let text;
   if(d>0)text=`${d}d ${h}h ${String(m).padStart(2,'0')}m`;
   else if(h>0)text=`${h}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
@@ -427,9 +431,11 @@ function calcPoints(p,r){
   if(!p||!scoreFilled(p.homeScore)||!scoreFilled(p.awayScore))return null;
   const rH=scoreValue(r.homeScore),rA=scoreValue(r.awayScore),pH=scoreValue(p.homeScore),pA=scoreValue(p.awayScore);
   if(pH===rH&&pA===rA)return 10;
+  // Acerto Invertido: placar exatamente oposto (só vale quando há vencedor)
   if(rH!==rA&&pH===rA&&pA===rH)return -2;
   const rR=rH>rA?'H':rH<rA?'A':'D',pR=pH>pA?'H':pH<pA?'A':'D';
   if(pR===rR){
+    // Acerto Intermediário: acertou vencedor/empate + placar de um time ou diferença de gols (≠0)
     const diff=rH-rA;
     if(pH===rH||pA===rA||(diff!==0&&(pH-pA)===diff))return 6;
     return 5;
@@ -442,14 +448,18 @@ function calcKOPoints(p,r){
   const rH=scoreValue(r.homeScore),rA=scoreValue(r.awayScore),pH=scoreValue(p.homeScore),pA=scoreValue(p.awayScore);
   if(pH===rH&&pA===rA)return 10;
   if(rH===rA){
+    // Resultado empatado no tempo normal: o diferencial é acertar o classificado.
     if(r.advancedTeam&&p.advancedTeam&&r.advancedTeam===p.advancedTeam)return 5;
     if(p.advancedTeam)return 2;
     return 0;
   }
+  // Acerto Invertido: placar exatamente oposto (só quando há vencedor no tempo normal)
   if(pH===rA&&pA===rH)return -2;
+  // Quem palpitou empate não pontua quando o resultado teve vencedor
   if(pH===pA)return 0;
   const rW=rH>rA?'home':'away',pW=pH>pA?'home':'away';
   if(rW===pW){
+    // Acerto Intermediário: acertou vencedor + placar de um time ou diferença de gols
     const diff=rH-rA;
     if(pH===rH||pA===rA||(diff!==0&&(pH-pA)===diff))return 6;
     return 5;
@@ -460,8 +470,15 @@ function calcKOPoints(p,r){
 let state={currentUser:null,tab:'matches',matchFilter:'upcoming',selectedUser:null,pinAttempts:0,adminMode:false};
 let DATA={bets:{},results:{},bonusBets:{},bonusResults:{},matchTeams:{}};
 
-const _saveTimers = {};
-const _saveQueue  = {};
+// ===== CAMADA DE DADOS (fala com /api/data) =====
+// Otimizações:
+// 1. Debounce de writes: inputs rápidos (digitar placar) geram apenas 1 request
+// 2. Retry automático (1x) em falha de rede transitória
+// 3. Fila de saves: nunca duas escritas simultâneas para a mesma chave
+// 4. Feedback visual sem bloquear a UI
+
+const _saveTimers = {};   // debounce por chave
+const _saveQueue  = {};   // evita concorrência por chave
 
 async function _fetchWithRetry(url, opts, retries=1) {
   try {
@@ -487,6 +504,8 @@ async function loadData(){
   }
 }
 
+// apiSave com debounce — chamadas dentro de 400ms para a mesma chave
+// são colapsadas numa só request
 function apiSave(scope, value, uid) {
   const key = uid ? `${scope}:${uid}` : scope;
   const shouldDebounce = scope === 'bets' || scope === 'bonusBets';
@@ -585,6 +604,7 @@ function selectUser(id){
 function onPin(v){document.getElementById('btn-login').disabled=v.length<4}
 function doLogin(){
   const uid=state.selectedUser,pin=document.getElementById('pin-input').value;
+  // Perfil ADMIN separado — não é jogador, não entra na classificação
   if(uid==='__admin__'){
     if(pin===ADMIN_PIN){state.currentUser={id:'__admin__',name:'Administrador',initials:'⚙'};state.adminMode=true;state.tab='admin';renderApp();return;}
     return loginFail();
@@ -634,12 +654,14 @@ function renderPage(){
   else if(state.tab==='bonus')c.innerHTML=renderBonus();
   else if(state.tab==='rules')c.innerHTML=renderRules();
   else if(state.tab==='admin')c.innerHTML=renderAdmin();
+  // Inicia/reinicia o tick dos contadores se houver algum na tela
   if(document.querySelector('[data-countdown]'))startCountdownTick();
   else if(countdownInterval){clearInterval(countdownInterval);countdownInterval=null;}
 }
 
+function activeUsers(){return USERS.filter(u=>!u.suspended)}
 function computeRanking(){
-  return USERS.map((u,i)=>{
+  return activeUsers().map((u,i)=>{
     let pts=0,exact=0,inter=0,winner=0,inverse=0;
     RAW_MATCHES.forEach(m=>{
       const res=DATA.results[m.id];if(!res||res.homeScore===undefined)return;
@@ -751,11 +773,11 @@ function renderAll(){
       <table class="all-table-v2">
         <thead><tr>
           <th class="sticky-col">${hN}<br><span style="font-weight:500;font-size:10px">× ${aN}</span></th>
-          ${USERS.map(u=>`<th>${u.name.split(' ')[0]}</th>`).join('')}
+          ${activeUsers().map(u=>`<th>${u.name.split(' ')[0]}</th>`).join('')}
         </tr></thead>
         <tbody><tr>
           <td class="sticky-col">${res?`${res.homeScore}–${res.awayScore}`:'Aguardando'}</td>
-          ${USERS.map(u=>{
+          ${activeUsers().map(u=>{
             const rawBet=(DATA.bets[u.id]||{})[m.id];
             const isAuto=!rawBet;
             const bet=rawBet||{homeScore:0,awayScore:0};
@@ -971,10 +993,13 @@ function renderAdmin(){
   </div>
   <div class="section-title">Participantes atuais</div>
   <div class="rank-card">
-    ${USERS.map((u,i)=>{const s=getAvatarStyle(i);return `<div class="rank-row" style="gap:.75rem">
+    ${USERS.map((u,i)=>{const s=getAvatarStyle(i);return `<div class="rank-row" style="gap:.75rem;${u.suspended?'opacity:.55':''}">
       <div class="rank-avatar" style="background:${s.bg};color:${s.color}">${u.initials}</div>
-      <div style="flex:1"><div style="font-weight:600;font-size:14px">${u.name}</div><div style="font-size:12px;color:var(--text-secondary)">PIN: ${u.pin} · ID: ${u.id}</div></div>
-      ${u.id!=='alexandre'?`<button class="btn-clear" onclick="removeUser('${u.id}')" style="font-size:11px;padding:.3rem .6rem">Remover</button>`:'<span style="font-size:11px;color:var(--text-tertiary)">admin</span>'}
+      <div style="flex:1"><div style="font-weight:600;font-size:14px">${u.name}${u.suspended?' <span style="font-size:10px;color:var(--red);font-weight:700;background:rgba(214,59,59,.12);padding:.1rem .4rem;border-radius:999px">SUSPENSO</span>':''}</div><div style="font-size:12px;color:var(--text-secondary)">PIN: ${u.pin} · ID: ${u.id}</div></div>
+      <div style="display:flex;gap:6px;align-items:center">
+        ${u.id!=='alexandre'?`<button class="${u.suspended?'btn-confirm':'btn-clear'}" onclick="toggleSuspend('${u.id}')" style="font-size:11px;padding:.3rem .65rem">${u.suspended?'Reativar':'Suspender'}</button>`:''}
+        ${u.id!=='alexandre'?`<button class="btn-clear" onclick="removeUser('${u.id}')" style="font-size:11px;padding:.3rem .6rem;border-color:var(--text-tertiary);color:var(--text-tertiary)">Remover</button>`:'<span style="font-size:11px;color:var(--text-tertiary)">admin</span>'}
+      </div>
     </div>`;}).join('')}
   </div>
   </div>`;
@@ -1040,6 +1065,7 @@ async function saveMatchTeam(id){
 }
 async function saveBonusResult(id,val){if(val===''||val==null)delete DATA.bonusResults[id];else DATA.bonusResults[id]=val;await apiSave('bonusResults',DATA.bonusResults);renderPage();}
 
+// Palpite retroativo — admin registra por um participante
 async function saveRetroBet(){
   const uid=document.getElementById('retro-uid')?.value;
   const mid=+document.getElementById('retro-mid')?.value;
@@ -1052,7 +1078,10 @@ async function saveRetroBet(){
   const m=RAW_MATCHES.find(x=>x.id===mid);
   const hT=teamOf(m,'home'),aT=teamOf(m,'away');
   const hN=hT?hT.name:'Mandante',aN=aT?aT.name:'Visitante';
-  if(!confirm(`Registrar palpite retroativo para ${user?.name}:\n${hN} ${+h} × ${+a} ${aN}\n\nConfirmar?`))return;
+  if(!confirm(`Registrar palpite retroativo para ${user?.name}:
+${hN} ${+h} × ${+a} ${aN}
+
+Confirmar?`))return;
   if(!DATA.bets[uid])DATA.bets[uid]={};
   DATA.bets[uid][mid]={homeScore:+h,awayScore:+a};
   await apiSave('bets',DATA.bets[uid],uid);
@@ -1060,6 +1089,7 @@ async function saveRetroBet(){
   renderPage();
 }
 
+// Gestão de usuários
 async function addUser(){
   const name=document.getElementById('new-name')?.value.trim();
   const pin=document.getElementById('new-pin')?.value.trim();
@@ -1083,6 +1113,20 @@ async function addUser(){
   renderPage();
 }
 
+async function toggleSuspend(uid){
+  const user=USERS.find(u=>u.id===uid);if(!user)return;
+  const action=user.suspended?'reativar':'suspender';
+  const msg=user.suspended
+    ?`Reativar ${user.name}?\n\nEle voltará a aparecer no ranking e nos palpites.`
+    :`Suspender ${user.name}?\n\nEle ficará oculto do ranking e da tabela de palpites enquanto estiver suspenso. Os dados são preservados e pode ser revertido a qualquer momento.`;
+  if(!confirm(msg))return;
+  user.suspended=!user.suspended;
+  const updated=[...USERS];
+  await apiSave('users',updated);
+  USERS=updated;DATA.users=updated;
+  showToast(`${user.name} ${user.suspended?'suspenso':'reativado'}.`,user.suspended?'error':'info');
+  renderPage();
+}
 async function removeUser(uid){
   const user=USERS.find(u=>u.id===uid);
   if(!user)return;
