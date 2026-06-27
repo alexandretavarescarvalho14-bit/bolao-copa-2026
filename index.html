@@ -464,11 +464,14 @@ function calcKOPoints(p,r){
     } else base=0;
   }
   // Bônus prorrogação: +3 se acertou o placar exato da prorrogação
+  // Bônus pênaltis: +3 se palpitou pênaltis e acertou quem se classificou
   let bonus=0;
   if(r.etType==='et'&&r.etHomeScore!==undefined&&r.etAwayScore!==undefined&&
      p.etHomeScore!==undefined&&p.etAwayScore!==undefined&&
      scoreValue(p.etHomeScore)===scoreValue(r.etHomeScore)&&
      scoreValue(p.etAwayScore)===scoreValue(r.etAwayScore)){
+    bonus=3;
+  } else if(r.etType==='pk'&&p.etType==='pk'&&r.advancedTeam&&p.advancedTeam&&r.advancedTeam===p.advancedTeam){
     bonus=3;
   }
   return base+bonus;
@@ -741,7 +744,7 @@ function renderMatches(){
             <option value="et"${bet.etType==='et'?' selected':''}>Prorrogação</option>
             <option value="pk"${bet.etType==='pk'?' selected':''}>Pênaltis direto</option>
           </select></div>
-        ${(bet.etType==='et'||bet.etType==='pk')?`<div class="et-row"><span class="et-label">Quem se classifica:</span>
+        ${(bet.etType==='et'||bet.etType==='pk')?`<div class="et-row"><span class="et-label">Quem se classifica: <span style="font-size:10px;background:var(--green-light);color:var(--green-d);padding:.1rem .4rem;border-radius:999px;font-weight:700">${bet.etType==='pk'?'+3 pts bônus se acertar':''}</span></span>
           <select class="et-select" onchange="setET(${m.id},'advancedTeam',this.value)">
             <option value="">-- selecionar --</option>${hOpt}${aOpt}</select></div>`:''}
         ${bet.etType==='et'?`<div class="et-row"><span class="et-label" style="color:var(--green-d);font-weight:600">Placar na prorrogação <span style="font-size:10px;background:var(--green-light);color:var(--green-d);padding:.1rem .4rem;border-radius:999px;font-weight:700">+3 pts bônus</span></span></div>
@@ -878,11 +881,14 @@ function renderRules(){
       </tbody>
     </table>
     <div style="margin-top:.85rem;padding:.75rem;background:linear-gradient(135deg,var(--green-light),var(--bg-secondary));border:1.5px solid var(--green);border-radius:var(--radius-md)">
-      <div style="font-family:var(--display);font-size:13px;font-weight:700;color:var(--green-d);margin-bottom:.4rem">Bônus prorrogação — +3 pts extras</div>
-      <p style="font-size:13px;line-height:1.5;color:var(--text-primary);margin:0">Quando um jogo vai para prorrogação, você pode palpitar também o <strong>placar da prorrogação</strong>. Se acertar exatamente, ganha <strong>+3 pontos</strong> adicionais — independente de quantos pontos já ganhou pelo tempo normal.</p>
-      <div style="margin-top:.5rem;font-size:12px;color:var(--text-secondary)">Exemplo: palpitou 1×1 (exato) + prorrogação + 2×1 para África do Sul → <strong style="color:var(--green-d)">10 + 3 = 13 pts</strong></div>
+      <div style="font-family:var(--display);font-size:13px;font-weight:700;color:var(--green-d);margin-bottom:.4rem">Bônus de +3 pts — prorrogação ou pênaltis</div>
+      <ul style="font-size:13px;line-height:1.6;color:var(--text-primary);padding-left:1.1rem;margin:0">
+        <li><strong>Prorrogação:</strong> palpite o placar exato da prorrogação. Se acertar → <strong style="color:var(--green-d)">+3 pts</strong></li>
+        <li><strong>Pênaltis:</strong> palpite que o jogo vai para pênaltis e acerte quem avança → <strong style="color:var(--green-d)">+3 pts</strong></li>
+      </ul>
+      <div style="margin-top:.6rem;font-size:12px;color:var(--text-secondary)">Exemplos: 1×1 + prorr. exata 2×1 → <strong style="color:var(--green-d)">13 pts</strong> · 1×1 + pênaltis + classificado certo → <strong style="color:var(--green-d)">8 pts</strong></div>
     </div>
-    <div class="rules-note" style="margin-top:.65rem">No mata-mata, o placar base conta apenas o tempo normal. Pênaltis decidem o classificado, mas não dão bônus de prorrogação.</div>
+    <div class="rules-note" style="margin-top:.65rem">No mata-mata, o placar base conta apenas o tempo normal. Os bônus são independentes e se somam aos pontos normais do jogo.</div>
   </div>
 
   <div class="rules-section">
